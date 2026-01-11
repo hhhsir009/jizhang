@@ -1,0 +1,7 @@
+{
+  "name": "add-bill",
+  "dependencies": {},
+  "extensions": {
+    "uni-cloud-jql": {}
+  }
+}

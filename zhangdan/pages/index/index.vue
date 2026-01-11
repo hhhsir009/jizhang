@@ -49,7 +49,10 @@
 						<view class="item-left">
 							<view class="category-icon">{{ item.category.substring(0, 1) }}</view>
 							<view class="item-info">
-								<text class="category-name">{{ item.category }}</text>
+								<view class="info-row-top">
+									<text class="category-name">{{ item.category }}</text>
+									<text class="record-time" v-if="item.time">{{ item.time }}</text>
+								</view>
 								<text class="note" v-if="item.note">{{ item.note }}</text>
 							</view>
 						</view>
@@ -170,25 +173,46 @@
 			}
 		},
 		computed: {
+			displayAmount() {
+				return this.expression || this.formData.amount;
+			},
 			currentCategories() {
 				return this.categories[this.formData.type];
 			},
 			groupedRecords() {
 				const groups = {};
 				this.records.forEach(record => {
-					const date = record.date;
-					if (!groups[date]) {
-						groups[date] = {
+					// 优先使用已格式化好的 date 字段
+					let dateKey = record.date;
+					
+					// 如果仍然没有日期，归类到"未知日期"
+					if (!dateKey) dateKey = '未知日期';
+
+					if (!groups[dateKey]) {
+						groups[dateKey] = {
 							list: [],
 							income: 0,
 							expense: 0
 						};
 					}
-					groups[date].list.push(record);
+					
+					// 构造前端需要的显示对象
+					const displayItem = {
+						_id: record._id,
+						type: record.type,
+						amount: record.amount,
+						// 明确使用 category 字段
+						category: record.category || '未分类',
+						note: record.note || '',
+						time: record.time || '' // 透传时间字段
+					};
+					
+					groups[dateKey].list.push(displayItem);
+					
 					if (record.type === 'income') {
-						groups[date].income += record.amount;
+						groups[dateKey].income += record.amount;
 					} else {
-						groups[date].expense += record.amount;
+						groups[dateKey].expense += record.amount;
 					}
 				});
 				return groups;
@@ -212,25 +236,55 @@
 				this.totalExpense = 2350.00;
 				this.balance = this.totalIncome - this.totalExpense;
 			},
-			fetchRecords() {
-				// 模拟最近流水数据
-				const now = new Date();
-				const formatDate = (date) => {
-					const m = (date.getMonth() + 1).toString().padStart(2, '0');
-					const d = date.getDate().toString().padStart(2, '0');
-					return `${m}月${d}日`;
-				};
+			async fetchRecords() {
+				uni.showLoading({
+					title: '加载中...'
+				});
+				
+				try {
+					const { result } = await uniCloud.callFunction({
+						name: 'get-bills',
+						data: {
+							limit: 20 // 可选：限制返回条数
+						}
+					});
 
-				const today = new Date();
-				const yesterday = new Date(today);
-				yesterday.setDate(today.getDate() - 1);
-
-				this.records = [
-					{ type: 'expense', amount: 25.50, category: '餐饮', note: '午饭-黄焖鸡', date: formatDate(today) },
-					{ type: 'expense', amount: 12.00, category: '交通', note: '打车', date: formatDate(today) },
-					{ type: 'income', amount: 5000.00, category: '工资', note: '1月工资', date: formatDate(yesterday) },
-					{ type: 'expense', amount: 150.00, category: '购物', note: '超市买菜', date: formatDate(yesterday) }
-				];
+					if (result.code === 0) {
+						this.records = result.data;
+						
+						// 更新汇总数据（简单从记录中计算，实际可能需要单独的接口或返回字段）
+						this.calculateSummary(this.records);
+					} else {
+						uni.showToast({
+							title: result.msg || '获取数据失败',
+							icon: 'none'
+						});
+					}
+				} catch (e) {
+					console.error('Fetch bills failed:', e);
+					uni.showToast({
+						title: '网络请求失败',
+						icon: 'none'
+					});
+				} finally {
+					uni.hideLoading();
+				}
+			},
+			calculateSummary(records) {
+				let income = 0;
+				let expense = 0;
+				
+				records.forEach(item => {
+					if (item.type === 'income') {
+						income += item.amount;
+					} else {
+						expense += item.amount;
+					}
+				});
+				
+				this.totalIncome = income;
+				this.totalExpense = expense;
+				this.balance = income - expense;
 			},
 			showSidebar() {
 				this.sidebarVisible = true;
@@ -337,41 +391,58 @@
 				}
 				return total;
 			},
-			saveRecord(shouldExit = true) {
+			async saveRecord(shouldExit = true) {
 				if (!this.formData.amount || parseFloat(this.formData.amount) <= 0) {
 					uni.showToast({ title: '请输入有效金额', icon: 'none' });
 					return;
 				}
 				
-				const now = new Date();
-				const m = (now.getMonth() + 1).toString().padStart(2, '0');
-				const d = now.getDate().toString().padStart(2, '0');
-				const dateStr = `${m}月${d}日`;
+				uni.showLoading({ title: '保存中...' });
 
-				const newRecord = {
-					...this.formData,
-					amount: parseFloat(this.formData.amount),
-					date: dateStr
-				};
+				try {
+					const now = new Date();
+					const year = now.getFullYear();
+					const month = (now.getMonth() + 1).toString().padStart(2, '0');
+					const day = now.getDate().toString().padStart(2, '0');
+					const dateStr = `${year}-${month}-${day}`; // 构造 YYYY-MM-DD 格式
 
-				this.records.unshift(newRecord);
-				
-				// 更新汇总数据（简单模拟）
-				if (newRecord.type === 'income') {
-					this.totalIncome += newRecord.amount;
-				} else {
-					this.totalExpense += newRecord.amount;
-				}
-				this.balance = this.totalIncome - this.totalExpense;
+					const recordData = {
+						type: this.formData.type,
+						amount: parseFloat(this.formData.amount),
+						category: this.formData.category,
+						date: dateStr,
+						note: this.formData.note
+					};
 
-				if (shouldExit) {
-					this.hideRecordPopup();
-					uni.showToast({ title: '记账成功', icon: 'success' });
-				} else {
-					// 再记一笔，重置金额和备注，保留类型和分类
-					this.formData.amount = '';
-					this.formData.note = '';
-					uni.showToast({ title: '已保存，请继续', icon: 'none' });
+					// 调用云函数 add-bill
+					const { result } = await uniCloud.callFunction({
+						name: 'add-bill',
+						data: recordData
+					});
+
+					if (result.code === 0) {
+						// 保存成功
+						uni.showToast({ title: '记账成功', icon: 'success' });
+						
+						// 刷新列表
+						this.fetchRecords();
+
+						if (shouldExit) {
+							this.hideRecordPopup();
+						} else {
+							// 再记一笔，重置金额和备注
+							this.expression = '';
+							this.formData.amount = '';
+							this.formData.note = '';
+						}
+					} else {
+						uni.showToast({ title: result.msg || '保存失败', icon: 'none' });
+					}
+				} catch (e) {
+					console.error('Save record failed:', e);
+					uni.showToast({ title: '保存失败，请重试', icon: 'none' });
+				} finally {
+					uni.hideLoading();
 				}
 			},
 			navigateTo(url) {
@@ -558,10 +629,23 @@
 						.item-info {
 							display: flex;
 							flex-direction: column;
+							flex: 1;
+
+							.info-row-top {
+								display: flex;
+								align-items: center;
+								gap: 16rpx;
+							}
 
 							.category-name {
 								font-size: 30rpx;
 								color: #333;
+							}
+							
+							.record-time {
+								font-size: 24rpx;
+								color: #ccc;
+								margin-top: 4rpx;
 							}
 
 							.note {
