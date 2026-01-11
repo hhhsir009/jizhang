@@ -1,0 +1,37 @@
+// 文档教程: https://uniapp.dcloud.net.cn/uniCloud/schema
+{
+  "bsonType": "object",
+  "required": ["key", "name", "type", "userId", "createdAt"],
+  "permission": {
+    "read": true,
+    "create": true,
+    "update": true,
+    "delete": true
+  },
+  "properties": {
+    "_id": {
+      "description": "系统自动生成 ID"
+    },
+    "userId": {
+      "bsonType": "string",
+      "description": "用户唯一标识，用于区分不同用户的分类"
+    },
+    "key": {
+      "bsonType": "string",
+      "description": "分类唯一标识，用于流水表关联"
+    },
+    "name": {
+      "bsonType": "string",
+      "description": "分类名称，用于展示"
+    },
+    "type": {
+      "bsonType": "string",
+      "description": "收支类型：income 或 expense",
+      "enum": ["income", "expense"]
+    },
+    "createdAt": {
+      "bsonType": "date",
+      "description": "创建时间"
+    }
+  }
+}
