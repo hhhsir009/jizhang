@@ -36,16 +36,16 @@
 
 		<!-- 流水记录瀑布流 -->
 		<view class="record-list">
-			<view class="date-card" v-for="(group, date) in groupedRecords" :key="date">
+			<view class="date-card" v-for="group in groupedRecords" :key="group.date">
 				<view class="date-header">
-					<text class="date-text">{{ date }}</text>
+					<text class="date-text">{{ group.date }}</text>
 					<view class="day-summary">
 						<text class="day-income" v-if="group.income > 0">入: {{ group.income.toFixed(2) }}</text>
 						<text class="day-expense" v-if="group.expense > 0">支: {{ group.expense.toFixed(2) }}</text>
 					</view>
 				</view>
 				<view class="record-items">
-					<view class="record-item" v-for="(item, index) in group.list" :key="index">
+					<view class="record-item" v-for="(item, index) in group.list" :key="index" @click.stop="goToDetail(item._id)">
 						<view class="item-left">
 							<view class="category-icon">{{ item.category.substring(0, 1) }}</view>
 							<view class="item-info">
@@ -64,7 +64,7 @@
 			</view>
 			
 			<!-- 空状态 -->
-			<view class="empty-state" v-if="Object.keys(groupedRecords).length === 0">
+			<view class="empty-state" v-if="groupedRecords.length === 0">
 				<text class="empty-text">最近还没有记账记录哦~</text>
 			</view>
 		</view>
@@ -83,8 +83,8 @@
 
 			<view class="amount-section" @click="focusAmount">
 				<text class="currency">¥</text>
-				<view class="amount-display" :class="{ empty: !formData.amount }">
-					{{ formData.amount || '0.00' }}
+				<view class="amount-display" :class="{ empty: !displayAmount }">
+					{{ displayAmount || '0.00' }}
 					<view class="cursor" v-if="recordPopupVisible"></view>
 				</view>
 			</view>
@@ -95,21 +95,56 @@
 					<view class="type-item" :class="{ active: formData.type === 'income' }" @click="formData.type = 'income'">收入</view>
 				</view>
 
-				<scroll-view class="category-scroll" scroll-x="true" show-scrollbar="false">
+				<scroll-view class="category-scroll" scroll-x="true">
 					<view class="category-row">
-						<view class="category-item" 
-							v-for="item in currentCategories" 
-							:key="item"
-							:class="{ active: formData.category === item }"
-							@click="formData.category = item">
+						<view class="category-item" v-for="(item, index) in currentCategories" :key="index" :class="{ active: formData.category === item }" @click="formData.category = item">
 							<view class="cat-icon">{{ item.substring(0, 1) }}</view>
 							<text class="cat-name">{{ item }}</text>
 						</view>
 					</view>
 				</scroll-view>
 
-				<view class="note-input-wrapper">
-					<input class="note-input" type="text" v-model="formData.note" placeholder="添加备注..." />
+				<view class="note-date-wrapper">
+					<view class="note-input-wrapper">
+						<input class="note-input" type="text" v-model="formData.note" placeholder="添加备注..." />
+					</view>
+					
+					<view class="date-picker-wrapper" @click="openCalendar">
+						<view class="date-display">
+							<text class="date-text">{{ formatDateDisplay(formData.date) }}</text>
+						</view>
+					</view>
+				</view>
+			</view>
+			
+			<!-- 日历弹窗 -->
+			<view class="calendar-mask" v-if="showCalendar" @click="showCalendar = false">
+				<view class="calendar-popup" @click.stop>
+					<view class="calendar-header">
+						<view class="month-switch" @click="changeMonth(-1)">
+							<text class="iconfont">&lt;</text>
+						</view>
+						<text class="current-month">{{ calendarYear }}年{{ calendarMonth }}月</text>
+						<view class="month-switch" @click="changeMonth(1)">
+							<text class="iconfont">&gt;</text>
+						</view>
+					</view>
+					<view class="week-header">
+						<text v-for="day in ['日', '一', '二', '三', '四', '五', '六']" :key="day">{{ day }}</text>
+					</view>
+					<view class="days-grid">
+						<view class="day-cell" 
+							v-for="(day, index) in calendarDays" 
+							:key="index"
+							:class="{
+								'empty': !day.day,
+								'today': day.isToday,
+								'selected': day.fullDate === formData.date
+							}"
+							@click="selectDate(day)">
+							<text>{{ day.day }}</text>
+						</view>
+					</view>
 				</view>
 			</view>
 
@@ -158,11 +193,15 @@
 				balance: 0.00,
 				records: [], // 原始记录列表
 				recordPopupVisible: false,
+				showCalendar: false,
+				calendarYear: new Date().getFullYear(),
+				calendarMonth: new Date().getMonth() + 1,
 				formData: {
 					type: 'expense',
 					amount: '',
 					category: '餐饮',
-					note: ''
+					note: '',
+					date: '' // YYYY-MM-DD
 				},
 				expression: '', // 用于实时计算的表达式
 				categories: {
@@ -180,16 +219,20 @@
 				return this.categories[this.formData.type];
 			},
 			groupedRecords() {
-				const groups = {};
+				const groupsMap = {};
 				this.records.forEach(record => {
 					// 优先使用已格式化好的 date 字段
 					let dateKey = record.date;
+					// 排序键：优先使用原始日期 YYYY-MM-DD，如果没有则使用格式化日期
+					let sortKey = record.originalDate || record.date || '0000-00-00';
 					
 					// 如果仍然没有日期，归类到"未知日期"
 					if (!dateKey) dateKey = '未知日期';
 
-					if (!groups[dateKey]) {
-						groups[dateKey] = {
+					if (!groupsMap[dateKey]) {
+						groupsMap[dateKey] = {
+							date: dateKey, // 存储显示的日期标题
+							sortKey: sortKey, // 存储用于排序的日期
 							list: [],
 							income: 0,
 							expense: 0
@@ -207,15 +250,57 @@
 						time: record.time || '' // 透传时间字段
 					};
 					
-					groups[dateKey].list.push(displayItem);
+					groupsMap[dateKey].list.push(displayItem);
 					
 					if (record.type === 'income') {
-						groups[dateKey].income += record.amount;
+						groupsMap[dateKey].income += record.amount;
 					} else {
-						groups[dateKey].expense += record.amount;
+						groupsMap[dateKey].expense += record.amount;
 					}
 				});
-				return groups;
+				
+				// 将对象转换为数组，并按日期倒序排列
+				const sortedGroups = Object.values(groupsMap).sort((a, b) => {
+					// 字符串比较：日期大的排前面 (desc)
+					if (a.sortKey < b.sortKey) return 1;
+					if (a.sortKey > b.sortKey) return -1;
+					return 0;
+				});
+				
+				return sortedGroups;
+			},
+			calendarDays() {
+				const year = this.calendarYear;
+				const month = this.calendarMonth - 1; // 0-11
+				const firstDay = new Date(year, month, 1).getDay(); // 0 (Sun) - 6 (Sat)
+				const daysInMonth = new Date(year, month + 1, 0).getDate();
+				
+				const days = [];
+				// 填充空白
+				for (let i = 0; i < firstDay; i++) {
+					days.push({});
+				}
+				
+				const today = new Date();
+				const todayStr = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
+				
+				// 填充日期
+				for (let i = 1; i <= daysInMonth; i++) {
+					const dateStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${i.toString().padStart(2, '0')}`;
+					days.push({
+						day: i,
+						fullDate: dateStr,
+						isToday: dateStr === todayStr
+					});
+				}
+				
+				// 补齐末尾，保证总是6行以保持高度一致 (6 * 7 = 42)
+				const remaining = 42 - days.length;
+				for (let i = 0; i < remaining; i++) {
+					days.push({});
+				}
+				
+				return days;
 			}
 		},
 		onLoad() {
@@ -250,6 +335,7 @@
 					});
 
 					if (result.code === 0) {
+						console.log('Fetched records:', result.data); // Debug log
 						this.records = result.data;
 						
 						// 更新汇总数据（简单从记录中计算，实际可能需要单独的接口或返回字段）
@@ -293,11 +379,17 @@
 				this.sidebarVisible = false;
 			},
 			showRecordPopup() {
+				const now = new Date();
+				const year = now.getFullYear();
+				const month = (now.getMonth() + 1).toString().padStart(2, '0');
+				const day = now.getDate().toString().padStart(2, '0');
+				
 				this.formData = {
 					type: 'expense',
 					amount: '',
 					category: '餐饮',
-					note: ''
+					note: '',
+					date: `${year}-${month}-${day}`
 				};
 				this.expression = '';
 				this.recordPopupVisible = true;
@@ -339,6 +431,16 @@
 					const parts = this.expression.split(/[+-]/);
 					const currentNum = parts[parts.length - 1];
 					if (currentNum.includes('.')) return;
+				}
+				
+				// 限制两位小数
+				if (!['+', '-', 'C', '保存退出', '保存继续'].includes(key)) {
+					const parts = this.expression.split(/[+-]/);
+					const currentNum = parts[parts.length - 1];
+					if (currentNum.includes('.')) {
+						const [integer, decimal] = currentNum.split('.');
+						if (decimal && decimal.length >= 2) return;
+					}
 				}
 
 				this.expression += key;
@@ -391,26 +493,79 @@
 				}
 				return total;
 			},
+			onDateChange(e) {
+				this.formData.date = e.detail.value;
+			},
+			openCalendar() {
+				// 优先使用当前表单的日期，如果没有则默认今天
+				const targetDate = this.formData.date || new Date().toISOString().split('T')[0];
+				const [y, m, d] = targetDate.split('-');
+				this.calendarYear = parseInt(y);
+				this.calendarMonth = parseInt(m);
+				this.showCalendar = true;
+			},
+			changeMonth(delta) {
+				let year = this.calendarYear;
+				let month = this.calendarMonth + delta;
+				if (month > 12) {
+					month = 1;
+					year++;
+				} else if (month < 1) {
+					month = 12;
+					year--;
+				}
+				this.calendarYear = year;
+				this.calendarMonth = month;
+			},
+			selectDate(day) {
+				if (day.day) {
+					this.formData.date = day.fullDate;
+					this.showCalendar = false;
+				}
+			},
+			formatDateDisplay(dateStr) {
+				if (!dateStr) return '';
+				const now = new Date();
+				const todayStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getDate().toString().padStart(2,'0')}`;
+				
+				// 转换为 YYYY-M-D 格式（去除前导零）
+				const parts = dateStr.split('-');
+				const y = Number(parts[0]);
+				const m = Number(parts[1]);
+				const d = Number(parts[2]);
+				const displayStr = `${y}-${m}-${d}`;
+				
+				if (dateStr === todayStr) {
+					return `${displayStr}（今天）`;
+				}
+				
+				// 计算周几
+				const dateObj = new Date(y, m - 1, d);
+				const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+				const weekDay = weekDays[dateObj.getDay()];
+				
+				return `${displayStr}（${weekDay}）`;
+			},
 			async saveRecord(shouldExit = true) {
 				if (!this.formData.amount || parseFloat(this.formData.amount) <= 0) {
 					uni.showToast({ title: '请输入有效金额', icon: 'none' });
 					return;
 				}
 				
+				// 验证日期字段是否有效
+				if (!this.formData.date) {
+					uni.showToast({ title: '请选择日期', icon: 'none' });
+					return;
+				}
+				
 				uni.showLoading({ title: '保存中...' });
 
 				try {
-					const now = new Date();
-					const year = now.getFullYear();
-					const month = (now.getMonth() + 1).toString().padStart(2, '0');
-					const day = now.getDate().toString().padStart(2, '0');
-					const dateStr = `${year}-${month}-${day}`; // 构造 YYYY-MM-DD 格式
-
 					const recordData = {
 						type: this.formData.type,
 						amount: parseFloat(this.formData.amount),
 						category: this.formData.category,
-						date: dateStr,
+						date: this.formData.date, // YYYY-MM-DD
 						note: this.formData.note
 					};
 
@@ -450,6 +605,29 @@
 				uni.navigateTo({
 					url: url
 				});
+			},
+			goToDetail(id) {
+				console.log('Clicked record id:', id);
+				if (!id) {
+					uni.showToast({
+						title: '记录ID丢失',
+						icon: 'none'
+					});
+					return;
+				}
+				// 延迟跳转，确保点击事件不冲突，并且给一些时间让控制台输出
+				setTimeout(() => {
+					uni.navigateTo({
+						url: `/pages/detail/detail?id=${id}`,
+						fail: (err) => {
+							console.error('Navigate failed:', err);
+							uni.showToast({
+								title: '跳转失败，请重启应用',
+								icon: 'none'
+							});
+						}
+					});
+				}, 100);
 			}
 		}
 	}
@@ -464,7 +642,6 @@
 
 	.header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
 		height: 100rpx;
 		padding-top: var(--status-bar-height);
@@ -476,6 +653,7 @@
 			flex-direction: column;
 			justify-content: center;
 			align-items: flex-start;
+			margin-right: 20rpx;
 			
 			.menu-line {
 				width: 40rpx;
@@ -493,7 +671,7 @@
 		}
 		
 		.placeholder {
-			width: 60rpx;
+			display: none;
 		}
 	}
 
@@ -788,6 +966,7 @@
 			50% { opacity: 0; }
 		}
 
+
 		.form-section {
 			padding: 30rpx 40rpx;
 
@@ -865,14 +1044,36 @@
 				}
 			}
 
-			.note-input-wrapper {
+			.note-date-wrapper {
+				display: flex;
+				align-items: center;
 				background-color: #f8f8f8;
 				border-radius: 12rpx;
 				padding: 20rpx;
+				
+				.note-input-wrapper {
+					flex: 1;
 
-				.note-input {
-					font-size: 28rpx;
-					width: 100%;
+					.note-input {
+						font-size: 28rpx;
+						width: 100%;
+					}
+				}
+				
+				.date-picker-wrapper {
+					margin-left: 20rpx;
+					padding-left: 20rpx;
+					border-left: 2rpx solid #eee;
+
+					.date-display {
+						font-size: 26rpx;
+						color: #666;
+						white-space: nowrap;
+						
+						.date-text {
+							font-weight: 500;
+						}
+					}
 				}
 			}
 		}
@@ -1013,6 +1214,98 @@
 			.version {
 				font-size: 24rpx;
 				color: #999;
+			}
+		}
+	}
+
+	/* 日历弹窗样式 */
+	.calendar-mask {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: rgba(0, 0, 0, 0.5);
+		z-index: 2000;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.calendar-popup {
+		width: 600rpx;
+		background-color: #fff;
+		border-radius: 20rpx;
+		padding: 30rpx;
+		box-shadow: 0 10rpx 40rpx rgba(0,0,0,0.2);
+
+		.calendar-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 30rpx;
+			padding: 0 20rpx;
+
+			.current-month {
+				font-size: 34rpx;
+				font-weight: bold;
+				color: #333;
+			}
+
+			.month-switch {
+				padding: 10rpx 20rpx;
+				color: #666;
+				font-weight: bold;
+				
+				&:active {
+					opacity: 0.6;
+				}
+			}
+		}
+
+		.week-header {
+			display: grid;
+			grid-template-columns: repeat(7, 1fr);
+			text-align: center;
+			margin-bottom: 20rpx;
+			
+			text {
+				font-size: 26rpx;
+				color: #999;
+			}
+		}
+
+		.days-grid {
+			display: grid;
+			grid-template-columns: repeat(7, 1fr);
+			gap: 10rpx;
+
+			.day-cell {
+				height: 80rpx;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				font-size: 30rpx;
+				color: #333;
+				border-radius: 50%;
+				
+				&.empty {
+					pointer-events: none;
+				}
+
+				&.today {
+					color: #42b983;
+					font-weight: bold;
+				}
+
+				&.selected {
+					background-color: #42b983;
+					color: #fff;
+				}
+				
+				&:active:not(.empty) {
+					background-color: #f0f0f0;
+				}
 			}
 		}
 	}

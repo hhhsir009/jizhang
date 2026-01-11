@@ -6,6 +6,12 @@
 				"navigationBarTitleText": "我的账单",
 				"navigationStyle": "custom"
 			}
+		},
+		{
+			"path": "pages/detail/detail",
+			"style": {
+				"navigationBarTitleText": "账单详情"
+			}
 		}
 	],
 	"globalStyle": {
