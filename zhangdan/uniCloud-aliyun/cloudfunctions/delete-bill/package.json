@@ -1,0 +1,7 @@
+{
+  "name": "delete-bill",
+  "dependencies": {},
+  "extensions": {
+    "uni-cloud-jql": {}
+  }
+}
